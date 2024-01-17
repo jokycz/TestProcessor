@@ -1,0 +1,8 @@
+TextProcesor/.vs/
+TextProcesor/bin/
+*.user
+TextProcesor/obj/project.assets.json
+TextProcesor/obj/
+TextProcessorTests/bin/Debug/net8.0-windows/DevExpress.CodeParser.v23.2.dll
+TextProcessorTests/bin/
+TextProcessorTests/obj/
