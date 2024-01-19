@@ -6,57 +6,118 @@ namespace TextProcessor
 {
     public partial class FormTextProcessor : Form
     {
-        private Task BackgroundTask;
+        private CancellationTokenSource cancellationTokenSource = new();
+        
 
         public FormTextProcessor()
         {
             InitializeComponent();
             bsTextStatistic.DataSource = new FileStatisticData();
-            StateButton(true);
+            ProgressBar(false);
         }
 
-        private void beInputFile_ButtonClick(object sender, DevExpress.XtraEditors.Controls.ButtonPressedEventArgs e)
+        private async void beInputFile_ButtonClick(object sender,
+            DevExpress.XtraEditors.Controls.ButtonPressedEventArgs e)
         {
-            using var openFileDialog = new OpenFileDialog();
-            if (openFileDialog.ShowDialog() != DialogResult.OK) return;
-
-            openFileDialog.Filter = @"Text Files (*.txt)|*.txt";
             var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
-            fileStatisticData.InputFile = openFileDialog.FileName;
-            bsTextStatistic.ResetBindings(false);
+            beInputFile.Enabled = false;
+
+            if (await TextProcessorRunnig(fileStatisticData)) return;
+            cancellationTokenSource = new CancellationTokenSource();
+
+            try
+            {
+                using var openFileDialog = new OpenFileDialog();
+                if (openFileDialog.ShowDialog() != DialogResult.OK) return;
+
+                openFileDialog.Filter = @"Text Files (*.txt)|*.txt";
+                fileStatisticData.InputFile = openFileDialog.FileName;
+                bsTextStatistic.ResetBindings(false);
+
+                fileStatisticData.Operation = OperationProcessor.Input;
+                var processor = new AnalyzeProcessor(bsTextStatistic);
+                ProgressBar(true);
+                await Task.Run(() => processor.Process(UpdateProgressBar, cancellationTokenSource.Token),
+                    cancellationTokenSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // The task was canceled, handle accordingly
+                UpdateUI(fileStatisticData);
+                MessageBox.Show(@"Analýza vstupního souboru přerušena.", @"Přerušení", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            finally
+            {
+                CloseProcessUI();
+                beInputFile.Enabled = true;
+                ProgressBar(false);
+            }
+        }
+
+        private async Task<bool> TextProcessorRunnig(FileStatisticData fileStatisticData)
+        {
+            if ((new[]
+                {
+                    OperationProcessor.SpecialFormat, OperationProcessor.RemoveDiacritics,
+                    OperationProcessor.RemoveEmptyLine, OperationProcessor.Copy, OperationProcessor.Input
+                }).Contains(fileStatisticData.Operation))
+            {
+                if (MessageBox.Show(@"Předchozí analýza stále probíhá chcete jí zrušit ?", @"Otázka",
+                        MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.No)
+                {
+                    return true;
+                }
+
+                await cancellationTokenSource.CancelAsync();
+
+                
+                while (fileStatisticData.Operation != OperationProcessor.None)
+                {
+                    await Task.Delay(1000);
+                }
+            }
+
+            return false;
         }
 
         private void beOutputFile_ButtonClick(object sender, DevExpress.XtraEditors.Controls.ButtonPressedEventArgs e)
         {
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+
             using var saveFileDialog = new SaveFileDialog();
             if (saveFileDialog.ShowDialog() != DialogResult.OK) return;
             saveFileDialog.Filter = @"Text Files (*.txt)|*.txt";
-            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
             fileStatisticData.OutputFile = saveFileDialog.FileName;
             bsTextStatistic.ResetBindings(false);
         }
 
-        private void CopyActionButton_Click(object sender, EventArgs e)
+        private async void CopyActionButton_Click(object sender, EventArgs e)
         {
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+            if (await TextProcessorRunnig(fileStatisticData)) return;
+            if (!TestValidFileName()) return;
+            CopyActionButton.Enabled = false;
+            cancellationTokenSource = new CancellationTokenSource();
             try
             {
-                if (!TestValidFileName()) return;
-
-                var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
-                fileStatisticData.Operation = OperationProcessor.RemoveDiacritics;
-                StateButton(false);
-
+                ProgressBar(true);
+                fileStatisticData.Operation = OperationProcessor.Copy;
                 var processor = new CopyProcessor(bsTextStatistic);
-                BackgroundTask = Task.Run(() => processor.Process(UpdateUI));
-
-                BackgroundTask.ContinueWith(completedTask => { CloseProcessUI(); });
+                await Task.Run(() => processor.Process(UpdateProgressBar,cancellationTokenSource.Token), cancellationTokenSource.Token);
             }
+            catch (OperationCanceledException)
+            {
+                UpdateUI(fileStatisticData);
+                MessageBox.Show(@"Operace kopírování vstupního souboru přerušena.", @"Přerušení", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             finally
             {
-                if (BackgroundTask?.Status == TaskStatus.RanToCompletion)
-                {
-                    StateButton(true);
-                }
+                CloseProcessUI();
+                CopyActionButton.Enabled = true;
+                ProgressBar(false);
             }
         }
 
@@ -103,6 +164,20 @@ namespace TextProcessor
             return true;
         }
 
+
+        private void UpdateProgressBar(FileStatisticData Data)
+        {
+            // Use Invoke to update UI elements from a non-UI thread
+            if (ProcessProgress.InvokeRequired)
+            {
+                ProcessProgress.Invoke((Action<FileStatisticData>)UpdateProgressBar, Data);
+            }
+            else
+            {
+                ProcessProgress.Position = Data.Position;
+            }
+        }
+
         public void UpdateUI(FileStatisticData Data)
         {
             Invoke((Delegate)(() =>
@@ -121,49 +196,33 @@ namespace TextProcessor
 
         public void CloseProcessUI()
         {
-            Invoke((Delegate)(() =>
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+            if (fileStatisticData.Abort)
             {
-                FileStatisticData fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
-                if (fileStatisticData.Abort)
-                {
-                    labTypeStatistic.Text = @"Zpracování neproběhlo";
-
-                    labNumberOfCharacters.Text = fileStatisticData.CharactersCountStr;
-                    labNumberOfSentences.Text = fileStatisticData.NumberOfSentencesStr;
-                    labWordCount.Text = fileStatisticData.WordCountStr;
-                    labNumberOfRows.Text = fileStatisticData.LinesCountStr;
-                }
-
+                labTypeStatistic.Text = @"Zpracování neproběhlo";
+            }
+            else
+            {
                 labTypeStatistic.Text = (fileStatisticData.Operation == OperationProcessor.Input)
                     ? "Vstupní soubor"
                     : "Výstupní soubor";
-                fileStatisticData.Operation = OperationProcessor.None;
-                labNumberOfCharacters.Text = fileStatisticData.CharactersCountStr;
-                labNumberOfSentences.Text = fileStatisticData.NumberOfSentencesStr;
-                labWordCount.Text = fileStatisticData.WordCountStr;
-                labNumberOfRows.Text = fileStatisticData.LinesCountStr;
-                ProcessProgress.Position = fileStatisticData.Position;
-                ProcessProgress.Refresh();
-                StateButton(true);
-            }));
+            }
+
+            fileStatisticData.Operation = OperationProcessor.None;
+            labNumberOfCharacters.Text = fileStatisticData.CharactersCountStr;
+            labNumberOfSentences.Text = fileStatisticData.NumberOfSentencesStr;
+            labWordCount.Text = fileStatisticData.WordCountStr;
+            labNumberOfRows.Text = fileStatisticData.LinesCountStr;
         }
 
-        public void StateButton(bool Active)
+        public void ProgressBar(bool Active)
         {
-            CopyActionButton.Enabled = Active;
-            RemoveDiacriticsButton.Enabled = Active;
-            RemoveEmptyLineButton.Enabled = Active;
-            SpecialFormatButton.Enabled = Active;
-            AbortButton.Visible = !Active;
-            ProcessProgress.Visible = !Active;
+            AbortButton.Visible = Active;
+            ProcessProgress.Visible = Active;
             ProcessProgress.Position = 0;
         }
 
-        private void FormTextProcessor_FormClosed(object sender, FormClosedEventArgs e)
-        {
-        }
-
-        private void FormTextProcessor_FormClosing(object sender, FormClosingEventArgs e)
+        private async void FormTextProcessor_FormClosing(object sender, FormClosingEventArgs e)
         {
             var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
             if (fileStatisticData.Operation == OperationProcessor.None)
@@ -171,99 +230,68 @@ namespace TextProcessor
                 return;
             }
 
-            if (fileStatisticData.Operation == OperationProcessor.Input)
-            {
-                fileStatisticData.Abort = true;
-
-                while (BackgroundTask.Status == TaskStatus.Running)
-                {
-                }
-
-                return;
-            }
-
-            //messge box otázka probíha operace opravdu přeušit operaci a zavřít aplikaci
-
-            string operationStr;
-            switch (fileStatisticData.Operation)
-            {
-                case OperationProcessor.Copy:
-                    operationStr = "Kopírování";
-                    break;
-                case OperationProcessor.RemoveDiacritics:
-                    operationStr = "Odstranění diakritiky";
-                    break;
-                case OperationProcessor.RemoveEmptyLine:
-                    operationStr = "Odstranění prázdných řádků";
-                    break;
-                case OperationProcessor.SpecialFormat:
-                    operationStr = "Speciální formát";
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-
-            var result = MessageBox.Show($@"Probíhá operace {operationStr}. Chcete ji přerušit a závřít aplikaci ?",
-                @"Potvrzení", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            if (result == DialogResult.Yes)
-            {
-                fileStatisticData.Abort = true;
-
-                while (BackgroundTask.Status == TaskStatus.Running)
-                {
-                }
-
-                return;
-            }
+            if (!await TextProcessorRunnig(fileStatisticData)) return;
 
             e.Cancel = true;
         }
 
-        private void RemoveDiacriticsButton_Click(object sender, EventArgs e)
+        private async void RemoveDiacriticsButton_Click(object sender, EventArgs e)
         {
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+            if (await TextProcessorRunnig(fileStatisticData)) return;
+            if (!TestValidFileName()) return;
+            CopyActionButton.Enabled = false;
+            cancellationTokenSource = new CancellationTokenSource();
+
             try
             {
-                if (!TestValidFileName()) return;
-
-                var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+                ProgressBar(true);
                 fileStatisticData.Operation = OperationProcessor.RemoveDiacritics;
-                StateButton(false);
-
                 var processor = new RemoveDiacriticsProcessor(bsTextStatistic);
-                BackgroundTask = Task.Run(() => processor.Process(UpdateUI));
-
-                BackgroundTask.ContinueWith(completedTask => { CloseProcessUI(); });
+                await Task.Run(() => processor.Process(UpdateProgressBar, cancellationTokenSource.Token), cancellationTokenSource.Token);
             }
+            catch (OperationCanceledException)
+            {
+                UpdateUI(fileStatisticData);
+                MessageBox.Show(@"Operace odstranění diakritiky přerušena.", @"Přerušení", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             finally
             {
-                if (BackgroundTask?.Status == TaskStatus.RanToCompletion)
-                {
-                    StateButton(true);
-                }
+                CloseProcessUI();
+                CopyActionButton.Enabled = true;
+                ProgressBar(false);
             }
         }
 
-        private void RemoveEmptyLineButton_Click(object sender, EventArgs e)
+        private async void RemoveEmptyLineButton_Click(object sender, EventArgs e)
         {
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+            if (await TextProcessorRunnig(fileStatisticData)) return;
+            if (!TestValidFileName()) return;
+            CopyActionButton.Enabled = false;
+            cancellationTokenSource = new CancellationTokenSource();
+
             try
             {
-                if (!TestValidFileName()) return;
-
-                var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+                ProgressBar(true);
                 fileStatisticData.Operation = OperationProcessor.RemoveEmptyLine;
-                StateButton(false);
-
                 var processor = new RemoveEmptyLineProcessor(bsTextStatistic);
-                BackgroundTask = Task.Run(() => processor.Process(UpdateUI));
-
-                BackgroundTask.ContinueWith(completedTask => { CloseProcessUI(); });
+                await Task.Run(() => processor.Process(UpdateProgressBar, cancellationTokenSource.Token), cancellationTokenSource.Token);
             }
+            catch (OperationCanceledException)
+            {
+                UpdateUI(fileStatisticData);
+                MessageBox.Show(@"Operace odstranění prázdných řádků přerušena.", @"Přerušení", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             finally
             {
-                if (BackgroundTask?.Status == TaskStatus.RanToCompletion)
-                {
-                    StateButton(true);
-                }
+                CloseProcessUI();
+                CopyActionButton.Enabled = true;
+                ProgressBar(false);
             }
         }
 
@@ -276,31 +304,39 @@ namespace TextProcessor
             if (result == DialogResult.Yes)
             {
                 fileStatisticData.Abort = true;
+                cancellationTokenSource.Cancel();
             }
         }
 
-        private void SpecialFormatButton_Click(object sender, EventArgs e)
+        private async void SpecialFormatButton_Click(object sender, EventArgs e)
         {
+            var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
+            if (await TextProcessorRunnig(fileStatisticData)) return;
+            if (!TestValidFileName()) return;
+            CopyActionButton.Enabled = false;
+            cancellationTokenSource = new CancellationTokenSource();
+
             try
             {
-                if (!TestValidFileName()) return;
-
-                var fileStatisticData = (FileStatisticData)bsTextStatistic.DataSource;
-                fileStatisticData.Operation = OperationProcessor.RemoveEmptyLine;
-                StateButton(false);
-
+                ProgressBar(true);
+                fileStatisticData.Operation = OperationProcessor.SpecialFormat;
                 var processor = new SpecialFormatProcessor(bsTextStatistic);
-                BackgroundTask = Task.Run(() => processor.Process(UpdateUI));
-
-                BackgroundTask.ContinueWith(completedTask => { CloseProcessUI(); });
+                await Task.Run(() => processor.Process(UpdateProgressBar, cancellationTokenSource.Token), cancellationTokenSource.Token);
             }
+            catch (OperationCanceledException)
+            {
+                UpdateUI(fileStatisticData);
+                MessageBox.Show(@"Operace specialního formátování přerušena.", @"Přerušení", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             finally
             {
-                if (BackgroundTask?.Status == TaskStatus.RanToCompletion)
-                {
-                    StateButton(true);
-                }
+                CloseProcessUI();
+                CopyActionButton.Enabled = true;
+                ProgressBar(false);
             }
+
         }
     }
 }

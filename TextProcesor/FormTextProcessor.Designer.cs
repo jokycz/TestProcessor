@@ -423,7 +423,6 @@
             Name = "FormTextProcessor";
             Text = "Text Procesor";
             FormClosing += FormTextProcessor_FormClosing;
-            FormClosed += FormTextProcessor_FormClosed;
             ((System.ComponentModel.ISupportInitialize)lcTextProcesor).EndInit();
             lcTextProcesor.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)layoutControlGroup1).EndInit();

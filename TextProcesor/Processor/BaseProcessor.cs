@@ -9,6 +9,8 @@ public class BaseProcessor
     internal FileStatisticData Data => (BsData.DataSource as FileStatisticData)!;
 
     private readonly List<string> listShortcut;
+    internal CancellationToken token = CancellationToken.None;
+    private int _position;
 
 #pragma warning disable S3604
 #pragma warning disable Roslyn.S3604
@@ -24,13 +26,34 @@ public class BaseProcessor
 #pragma warning restore Roslyn.S3604
 #pragma warning restore S3604
 
+    internal void UpdatePosition(Action<FileStatisticData> updateUi)
+    {
+        if (_position != Data.Position)
+        {
+            _position = Data.Position;
+            updateUi.Invoke(Data);
+        }
+    }
+    
     public void ClearCounter()
     {
         Data.CharactersCount = 0;
         Data.LinesCount = 0;
         Data.NumberOfSentences = 0;
         Data.WordsCount = 0;
+        Data.Position = 0;
     }
+
+    internal void TestCancelToken()
+    {
+        if (token.IsCancellationRequested)
+        {
+            Data.Abort = true;
+            ClearCounter();
+            throw new OperationCanceledException(token);
+        }
+    }
+
 
     public virtual bool AnalyzeLine(string line, bool lastWord)
     {

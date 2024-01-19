@@ -5,8 +5,9 @@ namespace TextProcessor.Processor;
 
 public class CopyProcessor(BindingSource bsData) : BaseProcessor(bsData), IProcessor
 {
-    public void Process(Action<FileStatisticData> updateUi)
+    public void Process(Action<FileStatisticData> updateUi, CancellationToken token)
     {
+        base.token = token;
         using var reader = new StreamReader(Data.InputFile, detectEncodingFromByteOrderMarks: true);
         using var writer = new StreamWriter(Data.OutputFile, false, reader.CurrentEncoding);
         
@@ -18,6 +19,8 @@ public class CopyProcessor(BindingSource bsData) : BaseProcessor(bsData), IProce
         var line = reader.ReadLine();
         var lastWord = false;
         var position = 0;
+        var OldPosition = 0;
+
         while (line != null)
         {
             position += line.Length + 2;
@@ -26,18 +29,13 @@ public class CopyProcessor(BindingSource bsData) : BaseProcessor(bsData), IProce
             lastWord = base.AnalyzeLine(line, lastWord);
             
             Data.LinesCount++;
-            
-            if (Data.Abort)
-            {
-                ClearCounter();
-                break;
-            }
-            
+
+            TestCancelToken();
+
             BsData.ResetBindings(false);
             writer.WriteLine(line);
 
-            updateUi.Invoke(Data);
-
+            UpdatePosition(updateUi);
             line = reader.ReadLine();
         }
 

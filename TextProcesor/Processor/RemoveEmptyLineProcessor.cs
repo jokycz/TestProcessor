@@ -5,8 +5,9 @@ namespace TextProcessor.Processor;
 
 public class RemoveEmptyLineProcessor(BindingSource bsData) : BaseProcessor(bsData), IProcessor
 {
-    public void Process(Action<FileStatisticData> updateUi)
+    public void Process(Action<FileStatisticData> updateUi, CancellationToken token)
     {
+        base.token = token;
         using var reader = new StreamReader(Data.InputFile);
         using var writer = new StreamWriter(Data.OutputFile);
         
@@ -18,6 +19,7 @@ public class RemoveEmptyLineProcessor(BindingSource bsData) : BaseProcessor(bsDa
         var line = reader.ReadLine();
         var lastWord = false;
         var position = 0;
+        var OldPosition = 0;
         while (line != null)
         {
             position += line.Length + 2;
@@ -33,14 +35,12 @@ public class RemoveEmptyLineProcessor(BindingSource bsData) : BaseProcessor(bsDa
             
             Data.LinesCount++;
             
-            if (Data.Abort)
-            {
-                break;
-            }
+            TestCancelToken();
             
             BsData.ResetBindings(false);
             writer.WriteLine(line);
-            updateUi.Invoke(Data);
+            UpdatePosition(updateUi);
+
 
             line = reader.ReadLine();
         }

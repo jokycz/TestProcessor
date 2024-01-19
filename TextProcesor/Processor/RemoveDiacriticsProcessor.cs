@@ -7,8 +7,9 @@ namespace TextProcessor.Processor;
 
 public class RemoveDiacriticsProcessor(BindingSource bsData) : BaseProcessor(bsData), IProcessor
 {
-    public void Process(Action<FileStatisticData> updateUi)
+    public void Process(Action<FileStatisticData> updateUi, CancellationToken token)
     {
+        base.token = token;
         using var reader = new StreamReader(Data.InputFile);
         using var writer = new StreamWriter(Data.OutputFile);
         
@@ -20,6 +21,7 @@ public class RemoveDiacriticsProcessor(BindingSource bsData) : BaseProcessor(bsD
         var line = reader.ReadLine();
         var lastWord = false;
         var position = 0;
+        var OldPosition = 0;
 
         while (line != null)
         {
@@ -31,16 +33,14 @@ public class RemoveDiacriticsProcessor(BindingSource bsData) : BaseProcessor(bsD
             lastWord = base.AnalyzeLine(line, lastWord);
             
             Data.LinesCount++;
-            
-            if (Data.Abort)
-            {
-                break;
-            }
-            
+
+            TestCancelToken();
+
             BsData.ResetBindings(false);
             writer.WriteLine(line);
 
-            updateUi.Invoke(Data);
+            UpdatePosition(updateUi);
+
             line = reader.ReadLine();
         }
 
@@ -49,6 +49,7 @@ public class RemoveDiacriticsProcessor(BindingSource bsData) : BaseProcessor(bsD
         reader.Close();
         writer.Close();
     }
+
 
     private static string RemoveDiacritics(string input)
     {
